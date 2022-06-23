@@ -511,11 +511,14 @@ class CAN(object):
         self.db = cantools.database.load_file('/home/max/Downloads/opendbc-master/honda.dbc')
         self.can_bus = can.interface.Bus('vcan0', bustype='socketcan')
         self.speed_message = self.db.get_message_by_name('CAR_SPEED')
+        self.brake_message = self.db.get_message_by_name('BRAKE_PRESSURE')
         self.gear_message = self.db.get_message_by_name('GEARBOX')
         self.steer_message = self.db.get_message_by_name('STEERING_SENSORS')
         self.speed_cache = 0
+
         self.steer_cache = 0
         self.gear_cache = "P"
+
     def send_car_speed(self, speed):
         if int(speed) != int(self.speed_cache):
             if(int(speed) != 0):
@@ -525,6 +528,12 @@ class CAN(object):
             self.speed_cache = speed
             data = self.speed_message.encode({'CAR_SPEED': speed})
             message = can.Message(arbitration_id=self.speed_message.frame_id, data=data)
+            self.can_bus.send(message)
+    
+    def send_brake(self, brake):
+        if brake != 0:
+            data = self.brake_message.encode({'BRAKE_PRESSURE1': brake*1000, 'BRAKE_PRESSURE2': brake*1000 })
+            message = can.Message(arbitration_id=self.brake_message.frame_id, data=data)
             self.can_bus.send(message)
 
     def send_gear(self, gear):
@@ -543,7 +552,7 @@ class CAN(object):
             data = self.steer_message.encode({'STEER_ANGLE': steer * 500, 'STEER_WHEEL_ANGLE': steer * 500})
             message = can.Message(arbitration_id=self.steer_message.frame_id, data=data)
             self.can_bus.send(message)
-
+    
 
 # ==============================================================================
 # -- HUD -----------------------------------------------------------------------
@@ -614,6 +623,7 @@ class HUD(object):
             if(c.reverse):
                 self.can.send_gear("R")
             self.can.send_steering(c.steer)
+            self.can.send_brake(c.brake)
             self._info_text += [
                 ('Throttle:', c.throttle, 0.0, 1.0),
                 ('Steer:', c.steer, -1.0, 1.0),
