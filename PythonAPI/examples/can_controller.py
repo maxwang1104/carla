@@ -508,7 +508,7 @@ class LaneAssist(object):
 
 class CAN(object):
     def __init__(self):
-        self.db = cantools.database.load_file('/home/max/Downloads/opendbc-master/honda.dbc')
+        self.db = cantools.database.load_file('/home/max/Carla/Dataset/honda.dbc')
         self.can_bus = can.interface.Bus('vcan0', bustype='socketcan')
         self.speed_message = self.db.get_message_by_name('CAR_SPEED')
         self.brake_message = self.db.get_message_by_name('BRAKE_PRESSURE')
