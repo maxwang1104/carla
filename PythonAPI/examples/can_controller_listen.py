@@ -178,6 +178,8 @@ class World(object):
         self.world.on_tick(hud.on_world_tick)
         self.recording_enabled = False
         self.recording_start = 0
+        
+        self.UseCANtoControl = 0
 
     def restart(self):
         self.player_max_speed = 1.589
@@ -412,6 +414,7 @@ class KeyboardControl(object):
         if not self._autopilot_enabled:
             if isinstance(self._control, carla.VehicleControl):
                 self._parse_vehicle_keys(pygame.key.get_pressed(), clock.get_time())
+
                 self._control.reverse = self._control.gear < 0
                 # Set automatic control-related vehicle lights
                 if self._control.brake:
@@ -431,7 +434,7 @@ class KeyboardControl(object):
 
     def _parse_vehicle_keys(self, keys, milliseconds):
         if keys[K_UP] or keys[K_w]:
-            self._control.throttle = min(self._control.throttle + 0.01, 1)
+            self._control.throttle = min(self._control.throttle + 0.01, 1.00)
         else:
             self._control.throttle = 0.0
 
@@ -454,6 +457,7 @@ class KeyboardControl(object):
         else:
             self._steer_cache = 0.0
         self._steer_cache = min(0.7, max(-0.7, self._steer_cache))
+        #print(self._steer_cache)
         self._control.steer = round(self._steer_cache, 1)
         self._control.hand_brake = keys[K_SPACE]
 
@@ -511,11 +515,12 @@ class CAN(object):
         self.db = cantools.database.load_file('/home/max/Carla/Dataset/honda.dbc')
         self.can_bus = can.interface.Bus('vcan0', bustype='socketcan')
         self.speed_message = self.db.get_message_by_name('CAR_SPEED')
+        self.throttle_message = self.db.get_message_by_name('THROTTLE')
         self.brake_message = self.db.get_message_by_name('BRAKE_PRESSURE')
         self.gear_message = self.db.get_message_by_name('GEARBOX')
         self.steer_message = self.db.get_message_by_name('STEERING_SENSORS')
         self.speed_cache = 0
-
+        self.throttle_cache = 0
         self.steer_cache = 0
         self.gear_cache = "P"
 
@@ -528,55 +533,39 @@ class CAN(object):
             self.speed_cache = speed
             data = self.speed_message.encode({'CAR_SPEED': speed})
             message = can.Message(arbitration_id=self.speed_message.frame_id, data=data)
-            self.can_bus.send(message)
+            #self.can_bus.send(message)
+    
+    def send_car_throttle(self, throttle):
+        # if throttle != self.throttle_cache:
+            self.throttle_cache = throttle
+            data = self.throttle_message.encode({'CTRL_THROTTLE': throttle})
+            message = can.Message(arbitration_id=self.throttle_message.frame_id, data=data)
+            #self.can_bus.send(message)
     
     def send_brake(self, brake):
-        if brake != 0:
-            data = self.brake_message.encode({'BRAKE_PRESSURE1': brake*1000, 'BRAKE_PRESSURE2': brake*1000 })
+        #if brake != 0:
+            data = self.brake_message.encode({'BRAKE_PRESSURE1': brake, 'BRAKE_PRESSURE2': brake})
             message = can.Message(arbitration_id=self.brake_message.frame_id, data=data)
+            print("brake",brake)
             self.can_bus.send(message)
 
     def send_gear(self, gear):
-        if gear is "P":
+        if gear == "P":
             data = self.gear_message.encode({'GEAR_SHIFTER': 1, 'GEAR': 1})
-        elif gear is "R":
+        elif gear == "R":
             data = self.gear_message.encode({'GEAR_SHIFTER': 2, 'GEAR': 2})
-        elif gear is "D":
+        elif gear == "D":
             data = self.gear_message.encode({'GEAR_SHIFTER': 8, 'GEAR': 4})
         message = can.Message(arbitration_id=self.gear_message.frame_id, data=data)
-        self.can_bus.send(message)
+        #self.can_bus.send(message)
 
     def send_steering(self, steer):
-        if steer  != self.steer_cache:
+        if steer != 0:
             self.steer_cache = steer
             data = self.steer_message.encode({'STEER_ANGLE': steer * 500, 'STEER_WHEEL_ANGLE': steer * 500})
             message = can.Message(arbitration_id=self.steer_message.frame_id, data=data)
-            self.can_bus.send(message)
-
-# ==============================================================================
-# -- Auto CAN -------------------------------------------------------------- Aphrx --
-# ==============================================================================
-
-class AutopilotCAN(object):
-    def __init__(self):
-        self.db = cantools.database.load_file("//home/max/Carla/Dataset/honda.dbc")
-        self.can_bus = can.interface.Bus("vcan0", bustype="socketcan")
-        self.speed = 0
-    
-    def read_can_bus(self,timeout=None):
-        self.receive_message = self.can_bus.recv(timeout)
-
-    def can_controller(self):                          #ID 14A Steer ID 1E7 Brake ID 191 Gear ID 309 Speed
-        self.read_can_bus(0.1)
-        if not self.receive_message:
-            return
-        if(self.receive_message.arbitration_id == 0x309):  #speed
-            decode_msg = self.db.decode_message(self.receive_message.arbitration_id, self.receive_message.data)
-            print(decode_msg)
-
-        elif(self.receive_message.arbitration_id == 0x191):  #speed
-            decode_msg = self.db.decode_message(self.receive_message.arbitration_id, self.receive_message.data)
-            print(decode_msg)
+            # print("steer messge",message)
+            #self.can_bus.send(message)
 
 # ==============================================================================
 # -- HUD -----------------------------------------------------------------------
@@ -596,7 +585,6 @@ class HUD(object):
         self._notifications = FadingText(font, (width, 40), (0, height - 40))
         self.help = HelpText(pygame.font.Font(mono, 16), width, height)
         self.can = CAN()
-        self.can_auto = AutopilotCAN()
         self.server_fps = 0
         self.frame = 0
         self.simulation_time = 0
@@ -649,7 +637,7 @@ class HUD(object):
                 self.can.send_gear("R")
             self.can.send_steering(c.steer)
             self.can.send_brake(c.brake)
-            self.can_auto.can_controller()
+            self.can.send_car_throttle(c.throttle)
             self._info_text += [
                 ('Throttle:', c.throttle, 0.0, 1.0),
                 ('Steer:', c.steer, -1.0, 1.0),
