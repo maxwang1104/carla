@@ -282,6 +282,7 @@ class KeyboardControl(object):
     def __init__(self, world, start_in_autopilot):
         self._autopilot_enabled = start_in_autopilot
         self.can_auto = AutopilotCAN()
+        self.can = CAN()
         if isinstance(world.player, carla.Vehicle):
             self._control = carla.VehicleControl()
             self._lights = carla.VehicleLightState.NONE
@@ -295,6 +296,7 @@ class KeyboardControl(object):
             raise NotImplementedError("Actor type not supported")
         self._steer_cache = 0.0
         self._throttle_cache = 0.0
+        self._brake_cache = 0.0
         world.hud.notification("Press 'H' or '?' for help.", seconds=4.0)
 
     def parse_events(self, client, world, clock):
@@ -418,6 +420,7 @@ class KeyboardControl(object):
 
                 #self._parse_vehicle_keys(pygame.key.get_pressed(), clock.get_time())
                 self.CAN_parse_vehicle_keys(pygame.key.get_pressed(), clock.get_time())
+                #self.CAN_Listener_parse_vehicle_keys()
 
                 self._control.reverse = self._control.gear < 0
                 # Set automatic control-related vehicle lights
@@ -466,28 +469,34 @@ class KeyboardControl(object):
         self._control.hand_brake = keys[K_SPACE]
 
     def CAN_parse_vehicle_keys(self, keys, milliseconds):
-        
         throttle = self.can_auto.can_throttle_controller()
         if keys[K_UP] or keys[K_w]:
-            self._control.throttle = min(self._control.throttle + 0.01, 1)
-        elif throttle != None :
+            self._throttle_cache = min(self._throttle_cache + 0.01, 1)
+        else:
+            self._throttle_cache = 0.0
+        self.can.send_car_throttle(self._throttle_cache)
+
+        throttle = self.can_auto.can_throttle_controller()
+        if throttle != None :
+            # print("####### Throttle ###########")
+            # print("throttle",throttle)
             self._control.throttle = throttle
-            print("####### Throttle ###########")
-            print("throttle",self._control.throttle)
-        else:
-            self._control.throttle = 0.0
-        
-        brake = self.can_auto.can_brake_controller()
+    
         if keys[K_DOWN] or keys[K_s]:
-            self._control.brake = min(self._control.brake + 0.2, 1)
-        elif brake != None:
-            self._control.brake = brake
-            print("####### Brake ###########")
-            print("brake",self._control.brake)
+            self._brake_cache = min(self._brake_cache + 0.2, 1)
+
         else:
-            self._control.brake = 0
-            
-        steer = self.can_auto.can_steer_controller()
+            self._brake_cache = 0.0
+        
+        self.can.send_brake(self._brake_cache)
+
+        brake = self.can_auto.can_brake_controller()   
+        if brake != None:
+            # print("####### Brake ###########")
+            # print("brake",brake) 
+            self._control.brake = brake
+
+
         steer_increment = 5e-4 * milliseconds
         if keys[K_LEFT] or keys[K_a]:
             if self._steer_cache > 0:
@@ -501,14 +510,25 @@ class KeyboardControl(object):
                 self._steer_cache += steer_increment
         else:
             self._steer_cache = 0.0
+        self._steer_cache = min(0.7, max(-0.7, self._steer_cache))
+
+        self.can.send_steering(self._steer_cache)
+
+        steer = self.can_auto.can_steer_controller()
         if steer != None:
-            self._steer_cache = steer
             print("####### Steer ###########")
             print("steer",self._steer_cache)
-        else:
-            self._steer_cache = min(0.7, max(-0.7, self._steer_cache))
+            self._control.steer = round(steer,1)
         
-        self._control.steer = round(self._steer_cache, 1)
+
+    # def CAN_Listener_parse_vehicle_keys(self):
+    #     throttle = self.can_auto.can_throttle_controller()
+    #     #print("throttle",throttle)
+    #     if throttle != None :
+    #         #self._throttle_cache = throttle
+    #         print("####### Throttle ###########")
+    #         print("throttle",throttle)
+    #         self._control.throttle = throttle
 
 
     def _parse_walker_keys(self, keys, milliseconds, world):
@@ -560,60 +580,62 @@ class LaneAssist(object):
 # ==============================================================================
 
 
-# class CAN(object):
-#     def __init__(self):
-#         self.db = cantools.database.load_file('/home/max/Carla/Dataset/honda.dbc')
-#         self.can_bus = can.interface.Bus('vcan0', bustype='socketcan')
-#         self.speed_message = self.db.get_message_by_name('CAR_SPEED')
-#         self.throttle_message = self.db.get_message_by_name('THROTTLE')
-#         self.brake_message = self.db.get_message_by_name('BRAKE_PRESSURE')
-#         self.gear_message = self.db.get_message_by_name('GEARBOX')
-#         self.steer_message = self.db.get_message_by_name('STEERING_SENSORS')
-#         self.speed_cache = 0
+class CAN(object):
+    def __init__(self):
+        self.db = cantools.database.load_file('/home/max/Carla/Dataset/honda.dbc')
+        self.can_bus = can.interface.Bus('vcan0', bustype='socketcan')
+        self.speed_message = self.db.get_message_by_name('CAR_SPEED')
+        self.throttle_message = self.db.get_message_by_name('THROTTLE')
+        self.brake_message = self.db.get_message_by_name('BRAKE_PRESSURE')
+        self.gear_message = self.db.get_message_by_name('GEARBOX')
+        self.steer_message = self.db.get_message_by_name('STEERING_SENSORS')
+        self.speed_cache = 0
 
-#         self.steer_cache = 0
-#         self.gear_cache = "P"
+        self.steer_cache = 0
+        self.gear_cache = "P"
 
-#     def send_car_speed(self, speed):
-#         if int(speed) != int(self.speed_cache):
-#             if(int(speed) != 0):
-#                 self.send_gear("D")
-#             else:
-#                 self.send_gear("P")
-#             self.speed_cache = speed
-#             data = self.speed_message.encode({'CAR_SPEED': speed})
-#             message = can.Message(arbitration_id=self.speed_message.frame_id, data=data)
-#             self.can_bus.send(message)
+    def send_car_speed(self, speed):
+        if int(speed) != int(self.speed_cache):
+            if(int(speed) != 0):
+                self.send_gear("D")
+            else:
+                self.send_gear("P")
+            self.speed_cache = speed
+            data = self.speed_message.encode({'CAR_SPEED': speed})
+            message = can.Message(arbitration_id=self.speed_message.frame_id, data=data)
+            #self.can_bus.send(message)
     
-#     def send_car_throttle(self, throttle):
-#         if throttle != 0:
-#             data = self.throttle_message.encode({'CTRL_THROTTLE': throttle})
-#             message = can.Message(arbitration_id=self.throttle_message.frame_id, data=data)
-#             self.can_bus.send(message)
-    
-#     def send_brake(self, brake):
-#         if brake != 0:
-#             data = self.brake_message.encode({'BRAKE_PRESSURE1': brake*1000, 'BRAKE_PRESSURE2': brake*1000 })
-#             message = can.Message(arbitration_id=self.brake_message.frame_id, data=data)
-#             self.can_bus.send(message)
+    def send_car_throttle(self, throttle):
+        # if throttle != self.throttle_cache:
+        self.throttle_cache = throttle
+        data = self.throttle_message.encode({'CTRL_THROTTLE': throttle})
+        message = can.Message(arbitration_id=self.throttle_message.frame_id, data=data)
+        self.can_bus.send(message)
 
-#     def send_gear(self, gear):
-#         if gear == "P":
-#             data = self.gear_message.encode({'GEAR_SHIFTER': 1, 'GEAR': 1})
-#         elif gear == "R":
-#             data = self.gear_message.encode({'GEAR_SHIFTER': 2, 'GEAR': 2})
-#         elif gear == "D":
-#             data = self.gear_message.encode({'GEAR_SHIFTER': 8, 'GEAR': 4})
-#         message = can.Message(arbitration_id=self.gear_message.frame_id, data=data)
-#         self.can_bus.send(message)
+    def send_brake(self, brake):
+        #if brake != 0:
+        data = self.brake_message.encode({'BRAKE_PRESSURE1': brake, 'BRAKE_PRESSURE2': brake})
+        message = can.Message(arbitration_id=self.brake_message.frame_id, data=data)
+        print("brake",brake)
+        self.can_bus.send(message)
 
-#     def send_steering(self, steer):
-#         if steer != 0:
-#             self.steer_cache = steer
-#             data = self.steer_message.encode({'STEER_ANGLE': steer * 500, 'STEER_WHEEL_ANGLE': steer * 500})
-#             message = can.Message(arbitration_id=self.steer_message.frame_id, data=data)
-#             # print("steer messge",message)
-#             self.can_bus.send(message)
+    def send_gear(self, gear):
+        if gear == "P":
+            data = self.gear_message.encode({'GEAR_SHIFTER': 1, 'GEAR': 1})
+        elif gear == "R":
+            data = self.gear_message.encode({'GEAR_SHIFTER': 2, 'GEAR': 2})
+        elif gear == "D":
+            data = self.gear_message.encode({'GEAR_SHIFTER': 8, 'GEAR': 4})
+        message = can.Message(arbitration_id=self.gear_message.frame_id, data=data)
+        #self.can_bus.send(message)
+
+    def send_steering(self, steer):
+        #if steer != 0:
+        self.steer_cache = steer
+        data = self.steer_message.encode({'STEER_ANGLE': steer * 500, 'STEER_WHEEL_ANGLE': steer * 500})
+        message = can.Message(arbitration_id=self.steer_message.frame_id, data=data)
+        # print("steer messge",message)
+        self.can_bus.send(message)
 
 # ==============================================================================
 # -- Auto CAN -------------------------------------------------------------- Aphrx --
@@ -624,47 +646,51 @@ class AutopilotCAN(object):
         self.db = cantools.database.load_file("//home/max/Carla/Dataset/honda.dbc")
         self.can_bus = can.interface.Bus("vcan0", bustype="socketcan")
         self.speed = 0
-    
-    def read_can_bus(self,timeout):
-        self.receive_message = self.can_bus.recv(timeout)
 
-    def can_throttle_controller(self):                          #ID 14A：Steer ID 1E7：Brake ID 191：Gear ID 309：Speed
-        self.read_can_bus(0.1)
-        if not self.receive_message:
-            return
-        if(self.receive_message.arbitration_id == 0x1f5):  # Throttle
+    def can_throttle_controller(self):        
+        self.receive_message = self.can_bus.recv(0.001)                  #ID 14A：Steer ID 1E7：Brake ID 191：Gear ID 309：Speed
+        #print(self.receive_message)
+        if self.receive_message == None:
+            return 
+        elif(self.receive_message.arbitration_id == 0x1f5):  # Throttle
             decode_msg = self.db.decode_message(self.receive_message.arbitration_id, self.receive_message.data)
+            #print("decode ",float(decode_msg['CTRL_THROTTLE']))
             return float(decode_msg['CTRL_THROTTLE'])
 
     def can_steer_controller(self):                          
-        self.read_can_bus(0.1)
-        if not self.receive_message:
-            return
+        self.receive_message = self.can_bus.recv(0.001)                  #ID 14A：Steer ID 1E7：Brake ID 191：Gear ID 309：Speed
+        #print(self.receive_message)
+        if self.receive_message == None:
+            return 
         if(self.receive_message.arbitration_id == 0x14A):  # Steer
             decode_msg = self.db.decode_message(self.receive_message.arbitration_id, self.receive_message.data)
-            #print(decode_msg['STEER_ANGLE']/500)
+            print("decode ",decode_msg['STEER_ANGLE']/500)
             return decode_msg['STEER_ANGLE']/500
 
     def can_brake_controller(self):                         
-        self.read_can_bus(0.1)
-        if not self.receive_message:
-            return
+        self.receive_message = self.can_bus.recv(0.001)                  #ID 14A：Steer ID 1E7：Brake ID 191：Gear ID 309：Speed
+        #print(self.receive_message)
+        if self.receive_message == None:
+            return 
         if(self.receive_message.arbitration_id == 0x1E7):  # Brake 
             decode_msg = self.db.decode_message(self.receive_message.arbitration_id, self.receive_message.data)
+            print("decode ",decode_msg['BRAKE_PRESSURE1'])
             return decode_msg['BRAKE_PRESSURE1']
 
     def can_gear_controller(self):                          
-        self.read_can_bus(0.1)
-        if not self.receive_message:
-            return    
+        self.receive_message = self.can_bus.recv(0.001)                  #ID 14A：Steer ID 1E7：Brake ID 191：Gear ID 309：Speed
+        #print(self.receive_message)
+        if self.receive_message == None:
+            return  
         if(self.receive_message.arbitration_id == 0x191):  # Gear
             decode_msg = self.db.decode_message(self.receive_message.arbitration_id, self.receive_message.data)
             return decode_msg['GEAR_SHIFTER']
             
     def can_speed_controller(self):                         
-        self.read_can_bus(0.1)
-        if not self.receive_message:
-            return    
+        self.receive_message = self.can_bus.recv(0.001)                  #ID 14A：Steer ID 1E7：Brake ID 191：Gear ID 309：Speed
+        #print(self.receive_message)
+        if self.receive_message == None:
+            return 
         if(self.receive_message.arbitration_id == 0x309):  # Speed
             decode_msg = self.db.decode_message(self.receive_message.arbitration_id, self.receive_message.data)
             return decode_msg['CAR_SPEED']
@@ -687,7 +713,7 @@ class HUD(object):
         self._font_mono = pygame.font.Font(mono, 12 if os.name == 'nt' else 14)
         self._notifications = FadingText(font, (width, 40), (0, height - 40))
         self.help = HelpText(pygame.font.Font(mono, 16), width, height)
-        #self.can = CAN()
+        self.can = CAN()
         self.can_auto = AutopilotCAN()
         self.server_fps = 0
         self.frame = 0
@@ -741,7 +767,7 @@ class HUD(object):
             #     self.can.send_gear("R")
             # self.can.send_steering(c.steer)
             # self.can.send_brake(c.brake)
-            # self.can.send_car_throttle(c.throttle)
+            self.can.send_car_throttle(c.throttle)
             self._info_text += [
                 ('Throttle:', c.throttle, 0.0, 1.0),
                 ('Steer:', c.steer, -1.0, 1.0),
