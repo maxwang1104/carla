@@ -496,7 +496,6 @@ class KeyboardControl(object):
             # print("brake",brake) 
             self._control.brake = brake
 
-
         steer_increment = 5e-4 * milliseconds
         if keys[K_LEFT] or keys[K_a]:
             if self._steer_cache > 0:
@@ -519,17 +518,6 @@ class KeyboardControl(object):
             print("####### Steer ###########")
             print("steer",self._steer_cache)
             self._control.steer = round(steer,1)
-        
-
-    # def CAN_Listener_parse_vehicle_keys(self):
-    #     throttle = self.can_auto.can_throttle_controller()
-    #     #print("throttle",throttle)
-    #     if throttle != None :
-    #         #self._throttle_cache = throttle
-    #         print("####### Throttle ###########")
-    #         print("throttle",throttle)
-    #         self._control.throttle = throttle
-
 
     def _parse_walker_keys(self, keys, milliseconds, world):
         self._control.speed = 0.0
@@ -616,7 +604,7 @@ class CAN(object):
         #if brake != 0:
         data = self.brake_message.encode({'BRAKE_PRESSURE1': brake, 'BRAKE_PRESSURE2': brake})
         message = can.Message(arbitration_id=self.brake_message.frame_id, data=data)
-        print("brake",brake)
+        #print("brake",brake)
         self.can_bus.send(message)
 
     def send_gear(self, gear):
